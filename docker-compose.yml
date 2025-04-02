@@ -1,55 +1,102 @@
-version: "3.8"
+version: '3.9'
 
 services:
   anvil:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: anvil
+      dockerfile: Dockerfile.anvil
     ports:
       - "8545:8545"
-    networks:
-      - ethnet
+    restart: unless-stopped
 
-  postgres:
-    image: postgres:13
-    container_name: blockscout_db
-    restart: always
-    environment:
-      POSTGRES_USER: blockscout
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: blockscout
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    networks:
-      - ethnet
+  redis-db:
+    extends:
+      file: ./services/redis.yml
+      service: redis-db
 
-  blockscout:
-    image: blockscout/blockscout:latest
-    container_name: blockscout
-    restart: always
+  db-init:
+    extends:
+      file: ./services/db.yml
+      service: db-init
+
+  db:
     depends_on:
-      - postgres
-      - anvil
-    ports:
-      - "4000:4000"
+      db-init:
+        condition: service_completed_successfully
+    extends:
+      file: ./services/db.yml
+      service: db
+
+  backend:
+    depends_on:
+      - db
+      - redis-db
+    extends:
+      file: ./services/backend.yml
+      service: backend
+    links:
+      - db:database
     environment:
-      DATABASE_URL: postgres://blockscout:password@blockscout_db:5432/blockscout
-      ETHEREUM_JSONRPC_HTTP_URL: http://anvil:8545
-      ETHEREUM_JSONRPC_TRACE_URL: http://anvil:8545
-      CHAIN_ID: "1337"
-      NETWORK: "Local Anvil"
-      SUBNETWORK: "Dev"
-      COIN: "ETH"
-      MIX_ENV: "prod"
-      ENABLE_CONTRACT_VERIFICATION: "true"
-      INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER: "true"
-      DISABLE_INDEXER: "false"
-    networks:
-      - ethnet
+        ETHEREUM_JSONRPC_VARIANT: 'anvil'
+        ETHEREUM_JSONRPC_WS_URL: ws://anvil:8545/
+        INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: 'true'
+        INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER: 'true'
+        CHAIN_ID: '1337'
 
-volumes:
-  pgdata:
+  visualizer:
+    extends:
+      file: ./services/visualizer.yml
+      service: visualizer
 
-networks:
-  ethnet:
+  sig-provider:
+    extends:
+      file: ./services/sig-provider.yml
+      service: sig-provider
+
+  frontend:
+    depends_on:
+      - backend
+    extends:
+      file: ./services/frontend.yml
+      service: frontend
+    environment:
+      NEXT_PUBLIC_NETWORK_ID: '1337'
+      NEXT_PUBLIC_NETWORK_RPC_URL: http://anvil:8545/
+
+  stats-db-init:
+    extends:
+      file: ./services/stats.yml
+      service: stats-db-init
+
+  stats-db:
+    depends_on:
+      stats-db-init:
+        condition: service_completed_successfully
+    extends:
+      file: ./services/stats.yml
+      service: stats-db
+
+  stats:
+    depends_on:
+      - stats-db
+      - backend
+    extends:
+      file: ./services/stats.yml
+      service: stats
+
+  user-ops-indexer:
+    depends_on:
+      - db
+      - backend
+    extends:
+      file: ./services/user-ops-indexer.yml
+      service: user-ops-indexer
+
+  proxy:
+    depends_on:
+      - backend
+      - frontend
+      - stats
+    extends:
+      file: ./services/nginx.yml
+      service: proxy
