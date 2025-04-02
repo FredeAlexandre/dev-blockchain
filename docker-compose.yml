@@ -1,12 +1,16 @@
 version: '3.9'
 
 services:
-  anvil:
-    build:
-      context: .
-      dockerfile: Dockerfile.anvil
-    ports:
-      - "8545:8545"
+  geth:
+    image: ethereum/client-go:stable
+    volumes:
+      - ./genesis.json:/genesis.json
+      - geth-data:/root/.ethereum
+    command: >
+      sh -c "
+        geth init /genesis.json &&
+        geth --http --http.addr 0.0.0.0 --http.port 8545 --http.api personal,eth,net,web3,miner --allow-insecure-unlock --nodiscover --http.corsdomain='*' --networkid 1337 --miner.etherbase=0x0000000000000000000000000000000000000001 --mine --http.vhosts='*'
+      "
     restart: unless-stopped
 
   redis-db:
@@ -34,14 +38,30 @@ services:
     extends:
       file: ./services/backend.yml
       service: backend
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile
+      args:
+        RELEASE_VERSION: 7.0.2
     links:
       - db:database
     environment:
-        ETHEREUM_JSONRPC_VARIANT: 'anvil'
-        ETHEREUM_JSONRPC_WS_URL: ws://anvil:8545/
-        INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: 'true'
-        INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER: 'true'
+        ETHEREUM_JSONRPC_HTTP_URL: http://geth:8545/
+        ETHEREUM_JSONRPC_TRACE_URL: http://geth:8545/
+        ETHEREUM_JSONRPC_WS_URL: ws://geth:8545/
         CHAIN_ID: '1337'
+
+  nft_media_handler:
+    depends_on:
+      - backend
+    extends:
+      file: ./services/nft_media_handler.yml
+      service: nft_media_handler
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile
+      args:
+        RELEASE_VERSION: 7.0.2
 
   visualizer:
     extends:
@@ -59,9 +79,6 @@ services:
     extends:
       file: ./services/frontend.yml
       service: frontend
-    environment:
-      NEXT_PUBLIC_NETWORK_ID: '1337'
-      NEXT_PUBLIC_NETWORK_RPC_URL: http://anvil:8545/
 
   stats-db-init:
     extends:
@@ -100,3 +117,6 @@ services:
     extends:
       file: ./services/nginx.yml
       service: proxy
+
+volumes:
+  geth-data:
